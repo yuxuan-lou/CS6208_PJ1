@@ -8,9 +8,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from ogb.nodeproppred import PygNodePropPredDataset
 
-from pygcn.utils import load_data, accuracy
-from pygcn.models import GCN
+from utils import load_data, accuracy
+from models import GCN
 
 # Training settings
 parser = argparse.ArgumentParser()
@@ -39,15 +40,32 @@ if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 # Load data
-adj, features, labels, idx_train, idx_val, idx_test = load_data()
+#adj, features, labels, idx_train, idx_val, idx_test = load_data()
+print('Loading OGB arxiv dataset...')
+arxiv_dataset = PygNodePropPredDataset(name='ogbn-arxiv')
+split_idx = arxiv_dataset.get_idx_split()
+idx_train, idx_valid, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
+features = arxiv_dataset[0].x
+labels = arxiv_dataset[0].y
+edge_list = arxiv_dataset[0].edge_index
+num_nodes = arxiv_dataset[0].num_nodes
+adj = torch.zeros((num_nodes, num_nodes), dtype=torch.float32)
+for i in range(edge_list.shape[1]):
+    adj[edge_list[0][i]][edge_list[1][i]] = 1
+    adj[edge_list[1][i]][edge_list[0][i]] = 1
+
+print('Done loading OGB arxiv dataset...')
 
 # Model and optimizer
+print('Creating model...')
 model = GCN(nfeat=features.shape[1],
             nhid=args.hidden,
             nclass=labels.max().item() + 1,
             dropout=args.dropout)
 optimizer = optim.Adam(model.parameters(),
                        lr=args.lr, weight_decay=args.weight_decay)
+
+print('Done creating model...')
 
 if args.cuda:
     model.cuda()
