@@ -43,17 +43,50 @@ if args.cuda:
 #adj, features, labels, idx_train, idx_val, idx_test = load_data()
 print('Loading OGB arxiv dataset...')
 arxiv_dataset = PygNodePropPredDataset(name='ogbn-arxiv')
+edge_list = arxiv_dataset[0].edge_index
 split_idx = arxiv_dataset.get_idx_split()
-idx_train, idx_valid, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
+idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
+idx_train = torch.squeeze(idx_train)
+idx_val = torch.squeeze(idx_val)
+idx_test = torch.squeeze(idx_test)
 features = arxiv_dataset[0].x
 labels = arxiv_dataset[0].y
+labels = torch.squeeze(labels)
 edge_list = arxiv_dataset[0].edge_index
 num_nodes = arxiv_dataset[0].num_nodes
-adj = torch.zeros((num_nodes, num_nodes), dtype=torch.float32)
-for i in range(edge_list.shape[1]):
-    adj[edge_list[0][i]][edge_list[1][i]] = 1
-    adj[edge_list[1][i]][edge_list[0][i]] = 1
+# adj = torch.zeros((num_nodes, num_nodes), dtype=torch.float32)
+# for i in range(edge_list.shape[1]):
+#     adj[edge_list[0][i]][edge_list[1][i]] = 1
+#     adj[edge_list[1][i]][edge_list[0][i]] = 1
 
+# 创建一个大小为 [num_nodes, num_nodes] 的稀疏邻接矩阵
+indices = torch.cat((edge_list, torch.flip(edge_list, [0])), 1)  # 反转边列表并连接，以考虑无向图的双向边
+values = torch.ones(indices.size(1))  # 值向量，其长度与边的数量相同
+adj_matrix_sparse = torch.sparse.FloatTensor(indices, values, (num_nodes, num_nodes))
+
+
+# 计算节点的度向量
+degree = torch.sparse.sum(adj_matrix_sparse, dim=1).to_dense()
+
+# 计算度矩阵的平方根的逆（D^(-1/2)）
+degree_inv_sqrt = degree.pow(-1/2)
+degree_inv_sqrt[degree_inv_sqrt == float('inf')] = 0  # 处理零度节点
+
+# 构建对角矩阵 D^(-1/2)
+diag_indices = torch.arange(len(degree_inv_sqrt), dtype=torch.long)
+diag_degree_inv_sqrt = torch.sparse.FloatTensor(
+    torch.stack([diag_indices, diag_indices]),
+    degree_inv_sqrt,
+    (len(degree_inv_sqrt), len(degree_inv_sqrt))
+)
+
+# 计算归一化的邻接矩阵：D^(-1/2) * A * D^(-1/2)
+normalized_adj_matrix = torch.sparse.mm(
+    torch.sparse.mm(diag_degree_inv_sqrt, adj_matrix_sparse),
+    diag_degree_inv_sqrt
+)
+
+adj = normalized_adj_matrix
 print('Done loading OGB arxiv dataset...')
 
 # Model and optimizer
